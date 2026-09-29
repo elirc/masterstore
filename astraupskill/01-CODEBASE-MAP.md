@@ -1,0 +1,9 @@
+# Codebase map: listing data from URL to catalog
+
+Begin at the localized product listing route and follow the filters into `storefront/src/lib/utils/listing-search-params.ts`. `parseListingSearchParams` reads `q`, `price_min`, `price_max`, availability, option repeats, and sort. It returns `ActiveFilters`, which the product data boundary consumes in `storefront/src/lib/data/products.ts`. The page and `ProductListing` then turn the server result into visible cards. This is a read path with CRUD consequences: a URL creates a request shape, the parser reads it, the data layer queries a catalog, and the UI renders the returned collection.
+
+The useful seam for this exercise is `parsePositiveInt`. It does not contact Spree and it does not own authorization. Its job is to decide whether a string can become a non-negative integer filter. The old `parseInt` behavior accepted a valid prefix from invalid text. The new regex and `Number.isSafeInteger` check make the accepted language explicit. Follow the import of `isAvailabilityStatus` into `storefront/src/types/filters.ts` when tracing why this utility needs an alias-aware loader in the focused test.
+
+Trace table: `?price_min=12` -> `readFirst` -> strict integer parser -> `filters.priceMin=12` -> product query; `?price_min=12px` -> parser rejects -> no lower bound; `?price_min=9007199254740992` -> unsafe -> no lower bound. A reviewer should separately inspect `storefront/src/lib/data/products.ts` for server-side query behavior, and `storefront/src/lib/webhooks/handlers.ts` for a different idempotency concern. Neither is changed or proven by this handoff. The source snapshot records the exact pre-change parser for an honest before/after comparison.
+
+When reading the map, keep a boundary ledger: raw URL input, normalized filter object, provider request, response collection, and rendered cards. Each boundary has different ownership and should not inherit assumptions from the next layer.
