@@ -1,11 +1,61 @@
 # Graduated practice
 
-Level one: predict six values before running code: `0`, `0012`, `12px`, `-2`, `1.5`, and `9007199254740992`. Write whether each becomes a filter property. Explain why digit acceptance and safe integer range are separate checks. Then compare your prediction with the five executable tests and add one assertion for a blank value.
+Every exercise has a **Goal** and a **Check**. All commands run from `storefront/` with Node 22.6+ and no install. Break-it exercises edit `src/lib/utils/listing-search-params.ts`; do them on a scratch branch and `git restore` the file afterwards. Write your prediction down first; answers are in [06-SOLUTIONS-AND-REVIEW.md](06-SOLUTIONS-AND-REVIEW.md).
 
-Level two: trace a complete query containing `q= shoes `, two `option` values, `price_min=12px`, `price_max=99`, and `sort= price `. Record every transformation: query trimming, repeated option collection, strict numeric parsing, and sort trimming. Your expected output should include the cleaned query and sort, both options, only the valid maximum, and `optionValues` in input order. This exercise tests data shape as well as a branch.
+The test command (called **T** below):
 
-Level three: inspect `src/lib/data/products.ts` and decide whether an omitted price bound is safe for its provider call. State what happens if the product service expects a string, whether server validation exists, and what test would prove it. Do not invent a database or pretend the provider was run. A strong answer separates parser correctness from catalog behavior.
+```text
+node --experimental-strip-types --experimental-loader ./tests/alias-loader.mjs --test ./tests/listing-search-params.test.mjs
+```
 
-Level four: propose an error-reporting policy for malformed filters. The current parser drops them, matching its existing availability convention. If you would return a 400 response, identify the route and update the contract, user message, and tests. Do not silently change the staged implementation. Self-grade one point each for exact prediction, trace completeness, source link, provider boundary, and a truthful limit statement.
+Unmodified, **T** prints `# pass 5`, `# fail 0` (re-run 2026-10-06, Node v22.16.0).
 
-A senior learner should also review whether logging raw query values could expose customer search terms. The parser fix does not add logging, and any future diagnostics should use controlled test fixtures rather than production URLs.
+## 1. Six predictions
+
+**Goal:** for `0`, `0012`, `12px`, `-1`, `1.5`, `9007199254740992`, predict whether each becomes a `priceMin`, and with what value. Explain why "only digits" and "safe integer" are separate checks.
+**Check (runnable):** every one of these values appears in test 1 or test 2 (`tests/listing-search-params.test.mjs:4-15`); **T** passing confirms the intended answers. Compare against yours.
+
+## 2. Remove the empty-string guard
+
+**Goal:** delete `value.length === 0 || ` from line 60. Predict which tests fail and which input causes it.
+**Check (runnable):** run **T**.
+
+## 3. Use `isFinite` instead of `isSafeInteger`
+
+**Goal:** change `Number.isSafeInteger(parsed)` to `Number.isFinite(parsed)` on line 62. Predict the failing input.
+**Check (runnable):** run **T**.
+
+## 4. Restore the old parser
+
+**Goal:** paste the snapshot's `Number.parseInt` body back into lines 60-62. Predict exactly which of the five tests fail. (Hint: test 3 passes `price_min: ['12px', '8']`.)
+**Check (runnable):** run **T**.
+
+## 5. The anchored regex
+
+**Goal:** replace `/\D/.test(value)` with `!/^\d+$/.test(value)`. Predict whether the `'12\n'` and `'12\r\n'` cases in test 2 still pass in JavaScript.
+**Check (runnable):** run **T**. Then read the correction in [03-WORKED-CHANGE.md](03-WORKED-CHANGE.md).
+
+## 6. Trace a URL all the way to Spree params
+
+**Goal:** for `q=%20shoes%20&price_min=12px&price_max=99&option=red&option=large&sort=%20anything-goes%20&price_min=5`, predict (a) the parsed `{ query, filters }` and (b) the object `buildProductQueryParams` (`src/lib/utils/product-query.ts:9-42`) returns.
+**Check (runnable):** create a scratch file **outside the repo** (for example in your temp folder) containing
+
+```js
+import { parseListingSearchParams } from "@/lib/utils/listing-search-params";
+import { buildProductQueryParams } from "@/lib/utils/product-query";
+const s = parseListingSearchParams(new URLSearchParams("<the query above>"));
+console.log(JSON.stringify(s));
+console.log(JSON.stringify(buildProductQueryParams(s.filters, s.query)));
+```
+
+and run `node --experimental-strip-types --experimental-loader ./tests/alias-loader.mjs <path-to-scratch-file>` from `storefront/`. Compare both lines with your prediction.
+
+## 7. Inverted range
+
+**Goal:** predict what reaches Spree for `price_min=500&price_max=10`. Decide whose job it is to reject or swap it: parser, query builder, UI, or Spree.
+**Check (runnable):** reuse the exercise 6 script with this query. Your write-up must name the file and line where you would add the rule and the test that would prove it.
+
+## 8. Error policy (senior)
+
+**Goal:** propose a policy for malformed filters: silent omission (today), normalization, or a visible error. If you choose an error, identify the route (`app/[country]/[locale]/(storefront)/products/page.tsx:33`), the user message, and the tests that would change.
+**Check (review):** your proposal states which existing behavior it is consistent with (`availability` at `listing-search-params.ts:73-77`) and which it is not (`sort`, F1 in 06).

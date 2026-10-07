@@ -1,13 +1,28 @@
 # Solutions and review rubric
 
-Solution to level one: `0` and `0012` are accepted as safe digit strings; `12px`, `-2`, and `1.5` are rejected by the digit check; `9007199254740992` converts to an unsafe integer and is rejected. A blank value fails the digit check. The key distinction is that a prefix parser answers "what number starts this string?" while this contract asks "is the entire string a non-negative integer?"
+Answers to [05-PRACTICE.md](05-PRACTICE.md). Exercises 2-7 were executed on 2026-10-06 (Node v22.16.0) against a scratch copy of the module and the real test file; the results below are observed, not predicted.
 
-Solution to level two: the query becomes `shoes`; both options remain in order; `price_min` disappears; `price_max` is `99`; sort becomes `price`. The parser returns an `ActiveFilters` object whose `optionValues` always exists. No catalog call is implied by this result. Solution to level three: the reviewer must inspect the provider adapter and add a provider-facing test if omission changes request semantics. The current check proves only the parser's output.
+## Solutions
 
-Review rubric: identity and contract, 2 points; branch coverage for valid, malformed, and overflow values, 2; preserving existing accepted shapes, 2; source-linked evidence, 2; limits about Next, Spree, and Vitest, 2. A strong review also asks whether digit strings with leading zeros are intentionally accepted and whether price bounds need an ordering rule. Neither question should be answered by guessing.
+1. `0` → `0`; `0012` → `12`; `12px`, `-1`, `1.5` → omitted (non-digit character); `9007199254740992` → omitted (digits, but not a safe integer). A prefix parser answers "what number starts this string?"; this contract asks "is the whole string a non-negative integer that `Number` represents exactly?"
+2. Only **test 2** fails. The input is `''`: `/\D/.test('')` is `false` and `Number('')` is `0`, so an empty bound would become `0`.
+3. Only **test 2** fails, on `'9007199254740992'` (finite, but not safe).
+4. **Tests 2 and 3** fail (`# pass 3`, `# fail 2`). Test 2: `'12px'` and others are accepted as prefixes. Test 3: `price_min: ['12px', '8']` now yields `priceMin: 12`. Tests 1, 4, 5 use only valid digits or already-absent bounds, so they still pass — a reminder that a green suite only covers the inputs it names.
+5. All five tests still **pass**. In JavaScript, `$` without the `m` flag matches only at the end of input, so `/^\d+$/` already rejects `'12\n'` and `'12\r\n'`.
+6. Parsed: `{"query":"shoes","filters":{"optionValues":["red","large"],"priceMax":99,"sortBy":"anything-goes"}}`. Spree params: `{"search":"shoes","price_lte":99,"with_option_value_ids":["red","large"],"sort":"anything-goes"}`. The second `price_min=5` is ignored because `readFirst` takes the first value (`12px`), which is rejected — there is no fallback to later values. `anything-goes` reaches Spree untouched.
+7. `{"price_gte":500,"price_lte":10}` is sent. Nothing between the URL and Spree checks ordering. A defensible answer puts the rule in `buildProductQueryParams` or the parser with a dedicated test, and states the chosen behavior (drop both, swap, or drop one).
+8. Open-ended; a strong answer keeps omission for consistency with `availability`, adds an allowlist for `sort`, and treats a visible error as a new contract.
 
-Before approving, compare [the snapshot](snapshots/src/lib/utils/listing-search-params.ts) with the staged file, verify the test imports the production module, and read the JSON result. Reject claims that the loader proves server authorization or that parser strictness makes webhook processing durable. The bounded change is valuable precisely because its contract and evidence stay small.
+## Verified review findings
 
-A score below the threshold should lead to one focused revision: add a case, rerun the same command, and update the evidence only if the terminal result changes. Do not inflate coverage by counting static reading as an executed test.
+**F1 — `sort` has no allowlist.** `availability` is checked against `AVAILABILITY_STATUSES` (`types/filters.ts`), but `sortBy` is any non-empty trimmed string (`listing-search-params.ts:90-91`) and `product-query.ts:37-39` forwards everything except `"manual"` to Spree as `params.sort`. Observed in exercise 6. The UI offers only `filtersData.sort_options` from Spree (`components/products/filters/ProductFilters.tsx:218`), so this matters for hand-edited or crawled URLs: each distinct junk value is a distinct `listingKey` and a distinct cache entry.
 
-For the newline review extension, /\D/ finds the final line terminator and rejects the bound. A repeated bound ["12px", "8"] is absent because readFirst selects the malformed first entry; the parser does not search later entries for a valid number. A missing minimum and maximum "0" produce only priceMax: 0. These answers separate omission from falsy numeric values and are asserted in the refreshed suite.
+**F2 — inverted price range passes through.** Observed in exercise 7: `price_gte: 500, price_lte: 10`. Not a security issue; a guaranteed-empty result that looks like "no products".
+
+**F3 — webhook idempotency is per process and check-then-act.** `lib/webhooks/handlers.ts:28-41` stores processed ids in a module-level `Set` (cap 10,000, oldest evicted). `handleOrderCompleted` checks at line 47, awaits `sendEmail` at line 64, and only marks at line 90. Two concurrent deliveries of the same event can both pass the check and both send; a restart or a second instance forgets everything. The comment at lines 20-27 documents the mark-after-send choice (so failed sends retry), which is reasonable — but it is at-least-once, not exactly-once.
+
+**F4 — `listingKey` normalizes option order but the URL does not.** `listingKey` sorts `optionValues` (line 163) while `buildListingSearchParams` preserves order (lines 137-139). Two URLs differing only in option order are the same listing state but different URLs; harmless today, worth knowing before using the URL itself as a cache key.
+
+## Rubric
+
+Approve the parser change only if: the snapshot diff is confined to lines 60-62; the test imports the production module (it does, line 3) rather than a copied predicate; `0` and `MAX_SAFE_INTEGER` stay accepted; no explicit `undefined` keys appear. Reject claims that the loader proves server authorization, that Spree was exercised, or that the parser makes webhook processing durable. Do not count static reading as an executed test.

@@ -1,9 +1,30 @@
 # Codebase map: listing data from URL to catalog
 
-Begin at the localized product listing route and follow the filters into `storefront/src/lib/utils/listing-search-params.ts`. `parseListingSearchParams` reads `q`, `price_min`, `price_max`, availability, option repeats, and sort. It returns `ActiveFilters`, which the product data boundary consumes in `storefront/src/lib/data/products.ts`. The page and `ProductListing` then turn the server result into visible cards. This is a read path with CRUD consequences: a URL creates a request shape, the parser reads it, the data layer queries a catalog, and the UI renders the returned collection.
+MasterStore is a Next.js 16 storefront for a Spree commerce backend (`storefront/`, package name `nextjs-starter-spree`). This course follows one read path: a product-listing URL becomes a Spree catalog request.
 
-The useful seam for this exercise is `parsePositiveInt`. It does not contact Spree and it does not own authorization. Its job is to decide whether a string can become a non-negative integer filter. The old `parseInt` behavior accepted a valid prefix from invalid text. The new regex and `Number.isSafeInteger` check make the accepted language explicit. Follow the import of `isAvailabilityStatus` into `storefront/src/types/filters.ts` when tracing why this utility needs an alias-aware loader in the focused test.
+## The path, file by file
 
-Trace table: `?price_min=12` -> `readFirst` -> strict integer parser -> `filters.priceMin=12` -> product query; `?price_min=12px` -> parser rejects -> no lower bound; `?price_min=9007199254740992` -> unsafe -> no lower bound. A reviewer should separately inspect `storefront/src/lib/data/products.ts` for server-side query behavior, and `storefront/src/lib/webhooks/handlers.ts` for a different idempotency concern. Neither is changed or proven by this handoff. The source snapshot records the exact pre-change parser for an honest before/after comparison.
+| Step | File (under `storefront/src/`) | What happens |
+|---|---|---|
+| 1 | `app/[country]/[locale]/(storefront)/products/page.tsx:33` (also `c/[...permalink]/page.tsx:55` for category pages) | the server page awaits `searchParams` and calls `parseListingSearchParams` |
+| 2 | `lib/utils/listing-search-params.ts:67-102` | `readFirst`/`readAll` pull `q`, `price_min`, `price_max`, `availability`, repeated `option`, `sort`; returns `{ query, filters }` |
+| 3 | `lib/utils/listing-search-params.ts:58-64` | `parsePositiveInt` — the seam this course changes |
+| 4 | `types/filters.ts` | `ActiveFilters` shape and `isAvailabilityStatus` allowlist (`in_stock`, `out_of_stock`) |
+| 5 | `components/products/ProductListing.tsx:98` | `buildProductQueryParams(state.filters, state.query)` |
+| 6 | `lib/utils/product-query.ts:9-42` | maps filters to Spree params: `price_gte`, `price_lte`, `with_option_value_ids`, `in_stock`/`out_of_stock`, `sort`, `search` |
+| 7 | `lib/data/products.ts:17-31` | `getProducts` → `cachedListProducts` (`"use cache: remote"`, ten-minute life, tag `products`) → `getClient().products.list` |
 
-When reading the map, keep a boundary ledger: raw URL input, normalized filter object, provider request, response collection, and rendered cards. Each boundary has different ownership and should not inherit assumptions from the next layer.
+`listingKey` (`listing-search-params.ts:156-165`) serializes the parsed state with `JSON.stringify` and is used as the React key that remounts the infinite list when filters change. It sorts `optionValues`, so `option=red&option=large` and `option=large&option=red` share one key.
+
+## The seam
+
+`parsePositiveInt` does not contact Spree and does not own authorization. Its job is to decide whether a string becomes a non-negative integer bound. The old `Number.parseInt` accepted a valid prefix of invalid text (`"12px"` → `12`). The new digit check plus `Number.isSafeInteger` makes the accepted language explicit. The exact pre-change file is [snapshots/src/lib/utils/listing-search-params.ts](snapshots/src/lib/utils/listing-search-params.ts); a whitespace-insensitive diff against the live file shows only lines 60-62 changed.
+
+Trace: `?price_min=12` → `readFirst` → parser → `filters.priceMin = 12` → `price_gte: 12`. `?price_min=12px` → parser rejects → no `priceMin` key → no `price_gte`. `?price_min=9007199254740992` → unsafe → omitted.
+
+## Neighbours you will be asked about, not changed here
+
+- `lib/utils/product-query.ts:37-39` forwards any non-`manual` `sortBy` string to Spree unvalidated (finding F1 in [06](06-SOLUTIONS-AND-REVIEW.md)).
+- `lib/webhooks/handlers.ts:28-41` keeps webhook idempotency in a per-process `Set` capped at 10,000 ids (finding F3).
+
+Keep a boundary ledger while reading: raw URL input, normalized filter object, Spree params, cached response, rendered cards. Each has a different owner and should not inherit assumptions from the next.

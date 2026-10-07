@@ -1,9 +1,23 @@
 # MasterStore listing CRUD upskill
 
-This staged change hardens a small but real query boundary in MasterStore. Product listing state is read from URL parameters in `storefront/src/lib/utils/listing-search-params.ts`. Before the change, `Number.parseInt("12px", 10)` produced `12`, so malformed input could become an accepted price bound. The parser now requires decimal digits and a safe integer. The [source snapshot](snapshots/src/lib/utils/listing-search-params.ts) preserves the original implementation for comparison, while [the runtime test](../storefront/tests/listing-search-params.test.mjs) executes the staged TypeScript module.
+MasterStore is a Next.js 16 storefront for a Spree commerce backend (all code under `storefront/`). This course hardens one small query boundary: product-listing state is read from URL parameters in `storefront/src/lib/utils/listing-search-params.ts`. Before the change, `Number.parseInt("12px", 10)` produced `12`, so malformed input could become an accepted price bound. The parser now requires decimal digits and a safe integer. The [source snapshot](snapshots/src/lib/utils/listing-search-params.ts) preserves the original, and [the runtime test](../storefront/tests/listing-search-params.test.mjs) executes the real TypeScript module.
 
-The course treats a listing filter as CRUD data: the URL creates a query, the parser reads it, the product data layer uses the resulting filters, and the rendered list reflects the read. A malformed value is a boundary failure rather than a UI styling concern. Chapters map the request path, explain parsing and idempotent reads, show the before and after, and then practice traces and review decisions. They also distinguish URL validation from server authorization, catalog persistence, cache invalidation, and durable webhook idempotency. Those larger concerns are visible in the repository but are outside this bounded fix.
+## Reading order
 
-Evidence is intentionally narrow. The dependency-free command passed five cases against the actual module: digit-only safe bounds remain numbers, malformed bounds are omitted, server-style arrays keep first-value semantics, valid listing state round-trips, and an independent zero bound survives. The alias loader resolves the repository's `@/` import for the test. No claim is made about Next rendering, Spree responses, Vitest, or a live catalog. Start with [01-CODEBASE-MAP.md](01-CODEBASE-MAP.md), predict the trace in [07-TRACE-LAB.md](07-TRACE-LAB.md), and use [VERIFICATION.md](VERIFICATION.md) to assess exactly what ran.
+1. [01-CODEBASE-MAP.md](01-CODEBASE-MAP.md) — URL → page → parser → query builder → cached Spree call, with file:line references.
+2. [02-CONCEPTS.md](02-CONCEPTS.md) — parsing vs trusting, query identity, omission as a policy.
+3. [03-WORKED-CHANGE.md](03-WORKED-CHANGE.md) — before/after, why each guard is needed, and a correction about JavaScript's `$` anchor.
+4. [04-TESTING-AND-DEBUGGING.md](04-TESTING-AND-DEBUGGING.md) — the focused check vs the Vitest suite.
+5. [05-PRACTICE.md](05-PRACTICE.md) — eight Goal + Check exercises, seven runnable with no install. Predict before opening [06-SOLUTIONS-AND-REVIEW.md](06-SOLUTIONS-AND-REVIEW.md), which also has four verified review findings.
+6. [07-TRACE-LAB.md](07-TRACE-LAB.md) — the same URL traced through both tables.
+7. [VERIFICATION.md](VERIFICATION.md) — exactly what ran.
 
-The central review question is whether the accepted input language is explicit and whether the evidence reaches the real parser. The staged check does both for this utility while leaving provider and route behavior for a later test boundary.
+## Quick check (from `storefront/`, Node 22.6+, no install)
+
+```text
+node --experimental-strip-types --experimental-loader ./tests/alias-loader.mjs --test ./tests/listing-search-params.test.mjs
+```
+
+Expect `# pass 5`. No claim is made about Next rendering, Spree responses, the Vitest suite, or a live catalog. URL validation is kept distinct from authorization, cache freshness, and webhook idempotency — those are visible in the repository and discussed as findings, but are outside this fix.
+
+`storefront/CLAUDE.md` is AI-assistant configuration for the upstream starter, not part of this course.

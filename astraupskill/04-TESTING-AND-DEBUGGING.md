@@ -1,11 +1,33 @@
 # Testing and debugging the filter boundary
 
-Start with a failing prediction, not a broad install. Given `new URLSearchParams("price_min=12px")`, the old code would create `{ priceMin: 12 }`; the intended contract is to omit the malformed bound. Given `price_min=12&price_max=99`, both values should remain numbers. Given an unsafe integer, no bound should be emitted. These are small cases with high diagnostic value because each maps to one branch in the parser.
+## Two test systems
 
-The staged command is `node --experimental-strip-types --experimental-loader ./tests/alias-loader.mjs --test ./tests/listing-search-params.test.mjs`, run from the staged `storefront` directory. The loader maps `@/` to `src/` and appends `.ts` for the production type source. The test imports `parseListingSearchParams` from the real utility, then asserts complete filter objects. It is not a copied predicate test: changing the production parser changes the result. The captured log is [the five-case output](evidence/crud-b03-astra-runtime.log), and [the result record](evidence/results.json) records 5/5.
+| Suite | Location | Count | Command | Needs install? |
+|---|---|---|---|---|
+| Focused parser check | `storefront/tests/listing-search-params.test.mjs` | 5 `test(...)` cases | see below | No (Node 22.6+) |
+| Project Vitest suite | `storefront/src/**/__tests__/*.test.{ts,tsx}` (7 files: cart, checkout, customer, payment data; CartContext; ProductCard; confirm-payment page) | not counted here | `npm install` then `npm test` (`vitest run`, jsdom) | Yes |
 
-When debugging a failure, inspect the raw URL first, then `readFirst`, then the parser, and finally the object spread that builds `filters`. A failure where `12px` survives points at the parser; a missing option points at `readAll`; a wrong sort points at trimming. A failed loader import points at the test harness, not product behavior. Native Vitest and the full Next application were not executed because dependencies were unavailable, so no claim about browser navigation, Spree requests, or rendering belongs in the evidence.
+The Vitest `include` is `src/**/*.test.{ts,tsx}` (`vitest.config.ts`), so the focused `.mjs` check in `storefront/tests/` is **not** part of `npm test`. Run it separately from `storefront/`:
 
-Keep harness failures separate from behavior failures. An unresolved alias or missing extension means the executable setup is incomplete; it is not evidence that the parser returned the wrong filter. Fix the loader, rerun, and preserve the final terminal output.
+```text
+node --experimental-strip-types --experimental-loader ./tests/alias-loader.mjs --test ./tests/listing-search-params.test.mjs
+```
 
-Run each malformed bound through URLSearchParams constructed from an object so plus signs and newlines arrive as literal decoded values. Test the server record form separately: a repeated price bound uses only its first value, even if a later value is valid. Finally build and parse a valid state, checking that unrelated repeated campaign parameters survive serialization. These checks cover both parser branches and their shared serialization contract.
+Node prints an `ExperimentalWarning` about `--experimental-loader`; that is expected. The loader (`tests/alias-loader.mjs`, 12 lines) maps `@/x` to `src/x.ts`, which is how the real `@/types/filters` import resolves. The test imports `parseListingSearchParams`, `buildListingSearchParams`, and `listingKey` from the real module and asserts complete filter objects, so changing the production parser changes the result. Re-run 2026-10-06 on Node v22.16.0: `# tests 5`, `# pass 5`, `# fail 0`.
+
+## Predict first
+
+Given `new URLSearchParams("price_min=12px")`, the old code produced `{ priceMin: 12 }`; the contract is to omit the bound. Given `price_min=12&price_max=99`, both remain numbers. Given an unsafe integer, no bound. Each case maps to one parser branch.
+
+## Debugging order
+
+Inspect the raw URL, then `readFirst` (`listing-search-params.ts:40-47`), then the parser (58-64), then the conditional spreads that build `filters` (93-99).
+
+- `12px` survives → parser.
+- A missing option → `readAll` (49-56), which also drops empty strings via `.filter(Boolean)` (line 86-88).
+- A valid later bound ignored → expected: `readFirst` takes the **first** value only, so `?price_min=12px&price_min=5` yields no minimum (verified 2026-10-06 with a scratch script).
+- `Cannot find module '@/…'` or `ERR_UNKNOWN_FILE_EXTENSION` → harness problem (loader not passed, or run from the wrong directory), not product behavior. Fix the command and rerun; do not count it as a parser failure.
+
+## Going one step further without an install
+
+`lib/utils/product-query.ts` has only a type import from `@spree/sdk`, which type stripping erases, so you can import `buildProductQueryParams` with the same loader from a scratch script and see the exact Spree params a URL produces (05, exercise 6). The Spree client, Next caching, and rendering still require dependencies and were not executed for this course.
